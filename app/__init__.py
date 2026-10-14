@@ -1,0 +1,2 @@
+"""Lumen Finance backend application."""
+
