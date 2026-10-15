@@ -8,31 +8,38 @@ from fastapi.responses import JSONResponse
 
 from .api import router
 from .config import settings
-from .db import Database
+from .db import MongoDatabase
 from .domain import ConflictError, NotFoundError
-from .repositories import SQLiteBudgetRepository, SQLiteTransactionRepository
+from .repositories import MongoBudgetRepository, MongoTransactionRepository
 from .schemas import HealthResponse
 from .service import ExpenseService
 
 
-def create_app(database_url: str | None = None) -> FastAPI:
-    database = Database(database_url or settings.database_url)
-    transaction_repository = SQLiteTransactionRepository(database)
-    budget_repository = SQLiteBudgetRepository(database)
-    service = ExpenseService(transaction_repository, budget_repository)
+def create_app(*, service: ExpenseService | None = None) -> FastAPI:
+    database: MongoDatabase | None = None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        database.initialize()
-        app.state.expense_service = service
+        nonlocal database
+        if service is None:
+            database = MongoDatabase(settings.mongodb_uri, settings.mongodb_database)
+            await database.initialize()
+            app.state.expense_service = ExpenseService(
+                MongoTransactionRepository(database.transactions),
+                MongoBudgetRepository(database.budgets),
+            )
+        else:
+            app.state.expense_service = service
         yield
+        if database is not None:
+            await database.close()
 
     app = FastAPI(
         title=settings.app_name,
-        version="0.1.0",
+        version="0.2.0",
         description=(
-            "Backend API for Lumen Finance. Structured financial records are "
-            "kept behind repositories so storage can move from SQLite to PostgreSQL."
+            "Backend API for Lumen Finance using MongoDB Atlas and the "
+            "native PyMongo Async driver."
         ),
         lifespan=lifespan,
     )
@@ -54,7 +61,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
         return JSONResponse(status_code=409, content={"detail": str(exception)})
 
     @app.get("/health", response_model=HealthResponse, tags=["system"])
-    def health() -> HealthResponse:
+    async def health() -> HealthResponse:
         return HealthResponse(status="ok", environment=settings.environment)
 
     return app

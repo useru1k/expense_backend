@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import sqlite3
+import re
 from datetime import date
 from typing import Protocol
 
-from .db import Database
+from pymongo.errors import DuplicateKeyError
+
 from .domain import (
     Budget,
     ConflictError,
@@ -16,7 +17,7 @@ from .domain import (
 
 
 class TransactionRepository(Protocol):
-    def list(
+    async def list(
         self,
         owner_id: str,
         *,
@@ -27,49 +28,66 @@ class TransactionRepository(Protocol):
         search: str | None = None,
     ) -> list[Transaction]: ...
 
-    def get(self, owner_id: str, transaction_id: str) -> Transaction: ...
+    async def get(self, owner_id: str, transaction_id: str) -> Transaction: ...
 
-    def create(self, transaction: Transaction) -> Transaction: ...
+    async def create(self, transaction: Transaction) -> Transaction: ...
 
-    def update(self, transaction: Transaction) -> Transaction: ...
+    async def update(self, transaction: Transaction) -> Transaction: ...
 
-    def delete(self, owner_id: str, transaction_id: str) -> None: ...
+    async def delete(self, owner_id: str, transaction_id: str) -> None: ...
 
 
 class BudgetRepository(Protocol):
-    def list(self, owner_id: str) -> list[Budget]: ...
+    async def list(self, owner_id: str) -> list[Budget]: ...
 
-    def get_by_category(self, owner_id: str, category: ExpenseCategory) -> Budget | None: ...
+    async def get_by_category(
+        self, owner_id: str, category: ExpenseCategory
+    ) -> Budget | None: ...
 
-    def create(self, budget: Budget) -> Budget: ...
+    async def create(self, budget: Budget) -> Budget: ...
 
-    def update(self, budget: Budget) -> Budget: ...
+    async def update(self, budget: Budget) -> Budget: ...
 
-    def delete(self, owner_id: str, budget_id: str) -> None: ...
+    async def delete(self, owner_id: str, budget_id: str) -> None: ...
 
 
-class SQLiteTransactionRepository:
-    def __init__(self, database: Database):
-        self.database = database
+class MongoTransactionRepository:
+    def __init__(self, collection):
+        self.collection = collection
 
     @staticmethod
-    def _from_row(row: sqlite3.Row) -> Transaction:
+    def _from_document(document) -> Transaction:
         from .domain import parse_date, parse_datetime
 
         return Transaction(
-            id=row["id"],
-            owner_id=row["owner_id"],
-            title=row["title"],
-            amount_cents=row["amount_cents"],
-            date=parse_date(row["transaction_date"]),
-            type=TransactionType(row["transaction_type"]),
-            category=ExpenseCategory(row["category"]),
-            notes=row["notes"],
-            created_at=parse_datetime(row["created_at"]),
-            updated_at=parse_datetime(row["updated_at"]),
+            id=document["_id"],
+            owner_id=document["owner_id"],
+            title=document["title"],
+            amount_cents=document["amount_cents"],
+            date=parse_date(document["transaction_date"]),
+            type=TransactionType(document["transaction_type"]),
+            category=ExpenseCategory(document["category"]),
+            notes=document.get("notes"),
+            created_at=parse_datetime(document["created_at"]),
+            updated_at=parse_datetime(document["updated_at"]),
         )
 
-    def list(
+    @staticmethod
+    def _document(transaction: Transaction) -> dict:
+        return {
+            "_id": transaction.id,
+            "owner_id": transaction.owner_id,
+            "title": transaction.title,
+            "amount_cents": transaction.amount_cents,
+            "transaction_date": transaction.date.isoformat(),
+            "transaction_type": transaction.type.value,
+            "category": transaction.category.value,
+            "notes": transaction.notes,
+            "created_at": transaction.created_at,
+            "updated_at": transaction.updated_at,
+        }
+
+    async def list(
         self,
         owner_id: str,
         *,
@@ -79,176 +97,128 @@ class SQLiteTransactionRepository:
         category: ExpenseCategory | None = None,
         search: str | None = None,
     ) -> list[Transaction]:
-        clauses = ["owner_id = ?"]
-        values: list[object] = [owner_id]
-        if start_date:
-            clauses.append("transaction_date >= ?")
-            values.append(start_date.isoformat())
-        if end_date:
-            clauses.append("transaction_date <= ?")
-            values.append(end_date.isoformat())
+        query: dict = {"owner_id": owner_id}
+        if start_date or end_date:
+            date_filter = {}
+            if start_date:
+                date_filter["$gte"] = start_date.isoformat()
+            if end_date:
+                date_filter["$lte"] = end_date.isoformat()
+            query["transaction_date"] = date_filter
         if transaction_type:
-            clauses.append("transaction_type = ?")
-            values.append(transaction_type.value)
+            query["transaction_type"] = transaction_type.value
         if category:
-            clauses.append("category = ?")
-            values.append(category.value)
+            query["category"] = category.value
         if search:
-            clauses.append("(LOWER(title) LIKE ? OR LOWER(COALESCE(notes, '')) LIKE ?)")
-            pattern = f"%{search.lower()}%"
-            values.extend([pattern, pattern])
+            pattern = re.escape(search.strip())
+            query["$or"] = [
+                {"title": {"$regex": pattern, "$options": "i"}},
+                {"notes": {"$regex": pattern, "$options": "i"}},
+            ]
 
-        query = (
-            "SELECT * FROM transactions WHERE "
-            + " AND ".join(clauses)
-            + " ORDER BY transaction_date DESC, created_at DESC"
+        cursor = self.collection.find(query).sort(
+            [("transaction_date", -1), ("created_at", -1)]
         )
-        with self.database.connect() as connection:
-            rows = connection.execute(query, values).fetchall()
-        return [self._from_row(row) for row in rows]
+        documents = await cursor.to_list(None)
+        return [self._from_document(document) for document in documents]
 
-    def get(self, owner_id: str, transaction_id: str) -> Transaction:
-        with self.database.connect() as connection:
-            row = connection.execute(
-                "SELECT * FROM transactions WHERE owner_id = ? AND id = ?",
-                (owner_id, transaction_id),
-            ).fetchone()
-        if row is None:
+    async def get(self, owner_id: str, transaction_id: str) -> Transaction:
+        document = await self.collection.find_one(
+            {"_id": transaction_id, "owner_id": owner_id}
+        )
+        if document is None:
             raise NotFoundError("Transaction not found")
-        return self._from_row(row)
+        return self._from_document(document)
 
-    def create(self, transaction: Transaction) -> Transaction:
-        with self.database.transaction() as connection:
-            connection.execute(
-                """INSERT INTO transactions
-                (id, owner_id, title, amount_cents, transaction_date,
-                 transaction_type, category, notes, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    transaction.id,
-                    transaction.owner_id,
-                    transaction.title,
-                    transaction.amount_cents,
-                    transaction.date.isoformat(),
-                    transaction.type.value,
-                    transaction.category.value,
-                    transaction.notes,
-                    transaction.created_at.isoformat(),
-                    transaction.updated_at.isoformat(),
-                ),
-            )
+    async def create(self, transaction: Transaction) -> Transaction:
+        await self.collection.insert_one(self._document(transaction))
         return transaction
 
-    def update(self, transaction: Transaction) -> Transaction:
-        with self.database.transaction() as connection:
-            result = connection.execute(
-                """UPDATE transactions SET title = ?, amount_cents = ?,
-                transaction_date = ?, transaction_type = ?, category = ?,
-                notes = ?, updated_at = ? WHERE owner_id = ? AND id = ?""",
-                (
-                    transaction.title,
-                    transaction.amount_cents,
-                    transaction.date.isoformat(),
-                    transaction.type.value,
-                    transaction.category.value,
-                    transaction.notes,
-                    transaction.updated_at.isoformat(),
-                    transaction.owner_id,
-                    transaction.id,
-                ),
-            )
-        if result.rowcount == 0:
+    async def update(self, transaction: Transaction) -> Transaction:
+        document = self._document(transaction)
+        document.pop("_id")
+        result = await self.collection.update_one(
+            {"_id": transaction.id, "owner_id": transaction.owner_id},
+            {"$set": document},
+        )
+        if result.matched_count == 0:
             raise NotFoundError("Transaction not found")
         return transaction
 
-    def delete(self, owner_id: str, transaction_id: str) -> None:
-        with self.database.transaction() as connection:
-            result = connection.execute(
-                "DELETE FROM transactions WHERE owner_id = ? AND id = ?",
-                (owner_id, transaction_id),
-            )
-        if result.rowcount == 0:
+    async def delete(self, owner_id: str, transaction_id: str) -> None:
+        result = await self.collection.delete_one(
+            {"_id": transaction_id, "owner_id": owner_id}
+        )
+        if result.deleted_count == 0:
             raise NotFoundError("Transaction not found")
 
 
-class SQLiteBudgetRepository:
-    def __init__(self, database: Database):
-        self.database = database
+class MongoBudgetRepository:
+    def __init__(self, collection):
+        self.collection = collection
 
     @staticmethod
-    def _from_row(row: sqlite3.Row) -> Budget:
+    def _from_document(document) -> Budget:
         from .domain import parse_datetime
 
         return Budget(
-            id=row["id"],
-            owner_id=row["owner_id"],
-            category=ExpenseCategory(row["category"]),
-            limit_cents=row["limit_cents"],
-            created_at=parse_datetime(row["created_at"]),
-            updated_at=parse_datetime(row["updated_at"]),
+            id=document["_id"],
+            owner_id=document["owner_id"],
+            category=ExpenseCategory(document["category"]),
+            limit_cents=document["limit_cents"],
+            created_at=parse_datetime(document["created_at"]),
+            updated_at=parse_datetime(document["updated_at"]),
         )
 
-    def list(self, owner_id: str) -> list[Budget]:
-        with self.database.connect() as connection:
-            rows = connection.execute(
-                "SELECT * FROM budgets WHERE owner_id = ? ORDER BY category",
-                (owner_id,),
-            ).fetchall()
-        return [self._from_row(row) for row in rows]
+    @staticmethod
+    def _document(budget: Budget) -> dict:
+        return {
+            "_id": budget.id,
+            "owner_id": budget.owner_id,
+            "category": budget.category.value,
+            "limit_cents": budget.limit_cents,
+            "created_at": budget.created_at,
+            "updated_at": budget.updated_at,
+        }
 
-    def get_by_category(self, owner_id: str, category: ExpenseCategory) -> Budget | None:
-        with self.database.connect() as connection:
-            row = connection.execute(
-                "SELECT * FROM budgets WHERE owner_id = ? AND category = ?",
-                (owner_id, category.value),
-            ).fetchone()
-        return None if row is None else self._from_row(row)
+    async def list(self, owner_id: str) -> list[Budget]:
+        cursor = self.collection.find({"owner_id": owner_id}).sort("category", 1)
+        documents = await cursor.to_list(None)
+        return [self._from_document(document) for document in documents]
 
-    def create(self, budget: Budget) -> Budget:
+    async def get_by_category(
+        self, owner_id: str, category: ExpenseCategory
+    ) -> Budget | None:
+        document = await self.collection.find_one(
+            {"owner_id": owner_id, "category": category.value}
+        )
+        return None if document is None else self._from_document(document)
+
+    async def create(self, budget: Budget) -> Budget:
         try:
-            with self.database.transaction() as connection:
-                connection.execute(
-                    """INSERT INTO budgets
-                    (id, owner_id, category, limit_cents, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?)""",
-                    (
-                        budget.id,
-                        budget.owner_id,
-                        budget.category.value,
-                        budget.limit_cents,
-                        budget.created_at.isoformat(),
-                        budget.updated_at.isoformat(),
-                    ),
-                )
-        except sqlite3.IntegrityError as error:
-            if "UNIQUE" in str(error).upper():
-                raise ConflictError("A budget already exists for this category") from error
-            raise
+            await self.collection.insert_one(self._document(budget))
+        except DuplicateKeyError as error:
+            raise ConflictError("A budget already exists for this category") from error
         return budget
 
-    def update(self, budget: Budget) -> Budget:
-        with self.database.transaction() as connection:
-            result = connection.execute(
-                """UPDATE budgets SET category = ?, limit_cents = ?, updated_at = ?
-                WHERE owner_id = ? AND id = ?""",
-                (
-                    budget.category.value,
-                    budget.limit_cents,
-                    budget.updated_at.isoformat(),
-                    budget.owner_id,
-                    budget.id,
-                ),
+    async def update(self, budget: Budget) -> Budget:
+        document = self._document(budget)
+        document.pop("_id")
+        try:
+            result = await self.collection.update_one(
+                {"_id": budget.id, "owner_id": budget.owner_id},
+                {"$set": document},
             )
-        if result.rowcount == 0:
+        except DuplicateKeyError as error:
+            raise ConflictError("A budget already exists for this category") from error
+        if result.matched_count == 0:
             raise NotFoundError("Budget not found")
         return budget
 
-    def delete(self, owner_id: str, budget_id: str) -> None:
-        with self.database.transaction() as connection:
-            result = connection.execute(
-                "DELETE FROM budgets WHERE owner_id = ? AND id = ?",
-                (owner_id, budget_id),
-            )
-        if result.rowcount == 0:
+    async def delete(self, owner_id: str, budget_id: str) -> None:
+        result = await self.collection.delete_one(
+            {"_id": budget_id, "owner_id": owner_id}
+        )
+        if result.deleted_count == 0:
             raise NotFoundError("Budget not found")
 

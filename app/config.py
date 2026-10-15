@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -14,22 +13,11 @@ load_dotenv()
 class Settings:
     app_name: str
     environment: str
-    database_url: str
+    mongodb_uri: str
+    mongodb_database: str
     cors_origins: tuple[str, ...]
     default_user_id: str
     require_user_header: bool
-
-    @property
-    def sqlite_path(self) -> Path:
-        """Return the local SQLite path for a sqlite:/// URL."""
-        if not self.database_url.startswith("sqlite:///"):
-            raise ValueError("sqlite_path is only available for SQLite URLs")
-
-        raw_path = self.database_url.removeprefix("sqlite:///")
-        path = Path(raw_path)
-        if not path.is_absolute():
-            path = Path.cwd() / path
-        return path
 
 
 def load_settings() -> Settings:
@@ -43,7 +31,8 @@ def load_settings() -> Settings:
     return Settings(
         app_name=os.getenv("APP_NAME", "Lumen Finance API"),
         environment=os.getenv("ENVIRONMENT", "development"),
-        database_url=os.getenv("DATABASE_URL", "sqlite:///./data/expense.db"),
+        mongodb_uri=os.getenv("MONGODB_URI", ""),
+        mongodb_database=os.getenv("MONGODB_DATABASE", "lumen_finance"),
         cors_origins=origins,
         default_user_id=os.getenv("DEFAULT_USER_ID", "demo-user"),
         require_user_header=os.getenv("REQUIRE_USER_HEADER", "false").lower()

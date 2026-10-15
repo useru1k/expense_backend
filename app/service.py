@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import calendar
 from datetime import date
-from decimal import Decimal
 
 from .domain import (
     Budget,
@@ -33,7 +32,7 @@ class ExpenseService:
         self.transactions = transactions
         self.budgets = budgets
 
-    def list_transactions(
+    async def list_transactions(
         self,
         owner_id: str,
         *,
@@ -43,7 +42,7 @@ class ExpenseService:
         category: ExpenseCategory | None = None,
         search: str | None = None,
     ) -> list[Transaction]:
-        return self.transactions.list(
+        return await self.transactions.list(
             owner_id,
             start_date=start_date,
             end_date=end_date,
@@ -52,10 +51,12 @@ class ExpenseService:
             search=search,
         )
 
-    def get_transaction(self, owner_id: str, transaction_id: str) -> Transaction:
-        return self.transactions.get(owner_id, transaction_id)
+    async def get_transaction(self, owner_id: str, transaction_id: str) -> Transaction:
+        return await self.transactions.get(owner_id, transaction_id)
 
-    def create_transaction(self, owner_id: str, payload: TransactionCreate) -> Transaction:
+    async def create_transaction(
+        self, owner_id: str, payload: TransactionCreate
+    ) -> Transaction:
         timestamp = now_utc()
         transaction = Transaction(
             id=new_id(),
@@ -69,15 +70,15 @@ class ExpenseService:
             created_at=timestamp,
             updated_at=timestamp,
         )
-        return self.transactions.create(transaction)
+        return await self.transactions.create(transaction)
 
-    def update_transaction(
+    async def update_transaction(
         self,
         owner_id: str,
         transaction_id: str,
         payload: TransactionUpdate,
     ) -> Transaction:
-        current = self.transactions.get(owner_id, transaction_id)
+        current = await self.transactions.get(owner_id, transaction_id)
         fields = payload.model_dump(exclude_unset=True)
         updated = Transaction(
             id=current.id,
@@ -95,15 +96,15 @@ class ExpenseService:
             created_at=current.created_at,
             updated_at=now_utc(),
         )
-        return self.transactions.update(updated)
+        return await self.transactions.update(updated)
 
-    def delete_transaction(self, owner_id: str, transaction_id: str) -> None:
-        self.transactions.delete(owner_id, transaction_id)
+    async def delete_transaction(self, owner_id: str, transaction_id: str) -> None:
+        await self.transactions.delete(owner_id, transaction_id)
 
-    def list_budgets(self, owner_id: str) -> list[Budget]:
-        return self.budgets.list(owner_id)
+    async def list_budgets(self, owner_id: str) -> list[Budget]:
+        return await self.budgets.list(owner_id)
 
-    def create_budget(self, owner_id: str, payload: BudgetCreate) -> Budget:
+    async def create_budget(self, owner_id: str, payload: BudgetCreate) -> Budget:
         timestamp = now_utc()
         budget = Budget(
             id=new_id(),
@@ -113,16 +114,17 @@ class ExpenseService:
             created_at=timestamp,
             updated_at=timestamp,
         )
-        return self.budgets.create(budget)
+        return await self.budgets.create(budget)
 
-    def update_budget(
+    async def update_budget(
         self,
         owner_id: str,
         budget_id: str,
         payload: BudgetUpdate,
     ) -> Budget:
+        budgets = await self.budgets.list(owner_id)
         existing = next(
-            (budget for budget in self.budgets.list(owner_id) if budget.id == budget_id),
+            (budget for budget in budgets if budget.id == budget_id),
             None,
         )
         if existing is None:
@@ -132,7 +134,7 @@ class ExpenseService:
         fields = payload.model_dump(exclude_unset=True)
         category = fields.get("category", existing.category)
         if category != existing.category:
-            duplicate = self.budgets.get_by_category(owner_id, category)
+            duplicate = await self.budgets.get_by_category(owner_id, category)
             if duplicate is not None and duplicate.id != budget_id:
                 from .domain import ConflictError
 
@@ -149,17 +151,19 @@ class ExpenseService:
             created_at=existing.created_at,
             updated_at=now_utc(),
         )
-        return self.budgets.update(updated)
+        return await self.budgets.update(updated)
 
-    def delete_budget(self, owner_id: str, budget_id: str) -> None:
-        self.budgets.delete(owner_id, budget_id)
+    async def delete_budget(self, owner_id: str, budget_id: str) -> None:
+        await self.budgets.delete(owner_id, budget_id)
 
-    def summary(self, owner_id: str, year: int, month: int) -> SummaryResponse:
+    async def summary(self, owner_id: str, year: int, month: int) -> SummaryResponse:
         last_day = calendar.monthrange(year, month)[1]
         start = date(year, month, 1)
         end = date(year, month, last_day)
-        transactions = self.list_transactions(owner_id, start_date=start, end_date=end)
-        budgets = self.list_budgets(owner_id)
+        transactions = await self.list_transactions(
+            owner_id, start_date=start, end_date=end
+        )
+        budgets = await self.list_budgets(owner_id)
 
         income_cents = sum(
             transaction.amount_cents

@@ -82,7 +82,7 @@ def to_budget_response(budget) -> BudgetResponse:
 
 
 @router.get("/transactions", response_model=list[TransactionResponse])
-def list_transactions(
+async def list_transactions(
     service: Annotated[ExpenseService, Depends(get_service)],
     user_id: Annotated[str, Depends(get_user_id)],
     start_date: date | None = Query(default=None),
@@ -93,7 +93,7 @@ def list_transactions(
 ) -> list[TransactionResponse]:
     if start_date and end_date and start_date > end_date:
         raise HTTPException(status_code=422, detail="start_date must be before end_date")
-    transactions = service.list_transactions(
+    transactions = await service.list_transactions(
         user_id,
         start_date=start_date,
         end_date=end_date,
@@ -109,89 +109,96 @@ def list_transactions(
     response_model=TransactionResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def create_transaction(
+async def create_transaction(
     payload: TransactionCreate,
     service: Annotated[ExpenseService, Depends(get_service)],
     user_id: Annotated[str, Depends(get_user_id)],
 ) -> TransactionResponse:
-    return to_transaction_response(service.create_transaction(user_id, payload))
+    return to_transaction_response(await service.create_transaction(user_id, payload))
 
 
 @router.get("/transactions/{transaction_id}", response_model=TransactionResponse)
-def get_transaction(
+async def get_transaction(
     transaction_id: str,
     service: Annotated[ExpenseService, Depends(get_service)],
     user_id: Annotated[str, Depends(get_user_id)],
 ) -> TransactionResponse:
-    return to_transaction_response(service.get_transaction(user_id, transaction_id))
+    return to_transaction_response(
+        await service.get_transaction(user_id, transaction_id)
+    )
 
 
 @router.patch("/transactions/{transaction_id}", response_model=TransactionResponse)
-def update_transaction(
+async def update_transaction(
     transaction_id: str,
     payload: TransactionUpdate,
     service: Annotated[ExpenseService, Depends(get_service)],
     user_id: Annotated[str, Depends(get_user_id)],
 ) -> TransactionResponse:
     return to_transaction_response(
-        service.update_transaction(user_id, transaction_id, payload)
+        await service.update_transaction(user_id, transaction_id, payload)
     )
 
 
 @router.delete("/transactions/{transaction_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_transaction(
+async def delete_transaction(
     transaction_id: str,
     service: Annotated[ExpenseService, Depends(get_service)],
     user_id: Annotated[str, Depends(get_user_id)],
 ) -> Response:
-    service.delete_transaction(user_id, transaction_id)
+    await service.delete_transaction(user_id, transaction_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/budgets", response_model=list[BudgetResponse])
-def list_budgets(
+async def list_budgets(
     service: Annotated[ExpenseService, Depends(get_service)],
     user_id: Annotated[str, Depends(get_user_id)],
 ) -> list[BudgetResponse]:
-    return [to_budget_response(budget) for budget in service.list_budgets(user_id)]
+    return [
+        to_budget_response(budget)
+        for budget in await service.list_budgets(user_id)
+    ]
 
 
 @router.post("/budgets", response_model=BudgetResponse, status_code=status.HTTP_201_CREATED)
-def create_budget(
+async def create_budget(
     payload: BudgetCreate,
     service: Annotated[ExpenseService, Depends(get_service)],
     user_id: Annotated[str, Depends(get_user_id)],
 ) -> BudgetResponse:
-    return to_budget_response(service.create_budget(user_id, payload))
+    return to_budget_response(await service.create_budget(user_id, payload))
 
 
 @router.patch("/budgets/{budget_id}", response_model=BudgetResponse)
-def update_budget(
+async def update_budget(
     budget_id: str,
     payload: BudgetUpdate,
     service: Annotated[ExpenseService, Depends(get_service)],
     user_id: Annotated[str, Depends(get_user_id)],
 ) -> BudgetResponse:
-    return to_budget_response(service.update_budget(user_id, budget_id, payload))
+    return to_budget_response(
+        await service.update_budget(user_id, budget_id, payload)
+    )
 
 
 @router.delete("/budgets/{budget_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_budget(
+async def delete_budget(
     budget_id: str,
     service: Annotated[ExpenseService, Depends(get_service)],
     user_id: Annotated[str, Depends(get_user_id)],
 ) -> Response:
-    service.delete_budget(user_id, budget_id)
+    await service.delete_budget(user_id, budget_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/summary", response_model=SummaryResponse)
-def get_summary(
+async def get_summary(
     service: Annotated[ExpenseService, Depends(get_service)],
     user_id: Annotated[str, Depends(get_user_id)],
     month: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
 ) -> SummaryResponse:
     year, month_number = parse_month(month)
-    return service.summary(user_id, year, month_number)
+    return await service.summary(user_id, year, month_number)
 
 
