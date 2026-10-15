@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from urllib.parse import unquote
+
 from pymongo import ASCENDING, DESCENDING, AsyncMongoClient, IndexModel
 from pymongo.server_api import ServerApi
 
@@ -12,6 +14,11 @@ class MongoDatabase:
             raise ValueError(
                 "MONGODB_URI is not configured. Copy .env.example to .env "
                 "and add your MongoDB Atlas connection string."
+            )
+        if "<db_password>" in unquote(uri):
+            raise ValueError(
+                "MONGODB_URI still contains <db_password>. Replace it with "
+                "your Atlas database password in .env."
             )
         self.client = AsyncMongoClient(
             uri,
