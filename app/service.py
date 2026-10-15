@@ -101,6 +101,9 @@ class ExpenseService:
     async def delete_transaction(self, owner_id: str, transaction_id: str) -> None:
         await self.transactions.delete(owner_id, transaction_id)
 
+    async def delete_all_transactions(self, owner_id: str) -> None:
+        await self.transactions.delete_all(owner_id)
+
     async def list_budgets(self, owner_id: str) -> list[Budget]:
         return await self.budgets.list(owner_id)
 

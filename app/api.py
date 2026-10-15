@@ -150,6 +150,15 @@ async def delete_transaction(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.delete("/transactions", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_all_transactions(
+    service: Annotated[ExpenseService, Depends(get_service)],
+    user_id: Annotated[str, Depends(get_user_id)],
+) -> Response:
+    await service.delete_all_transactions(user_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.get("/budgets", response_model=list[BudgetResponse])
 async def list_budgets(
     service: Annotated[ExpenseService, Depends(get_service)],

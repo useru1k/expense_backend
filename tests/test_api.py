@@ -71,6 +71,13 @@ class FakeTransactionRepository:
         await self.get(owner_id, transaction_id)
         del self.items[transaction_id]
 
+    async def delete_all(self, owner_id: str):
+        self.items = {
+            transaction_id: transaction
+            for transaction_id, transaction in self.items.items()
+            if transaction.owner_id != owner_id
+        }
+
 
 class FakeBudgetRepository:
     def __init__(self):
@@ -217,6 +224,36 @@ def test_summary_and_budget_conflict():
         assert summary.json()["remaining_budget"] == 374.75
         assert summary.json()["category_spending"]["groceries"] == 125.25
         assert summary.json()["transaction_count"] == 2
+
+
+def test_clear_all_transactions_is_scoped_to_the_owner():
+    with make_client() as client:
+        for user_id in ["user-a", "user-a", "user-b"]:
+            response = client.post(
+                "/api/v1/transactions",
+                json={
+                    "title": "Transaction",
+                    "amount": "10.00",
+                    "date": "2026-10-15",
+                    "type": "expense",
+                    "category": "other",
+                },
+                headers={"X-User-Id": user_id},
+            )
+            assert response.status_code == 201
+
+        cleared = client.delete(
+            "/api/v1/transactions", headers={"X-User-Id": "user-a"}
+        )
+        assert cleared.status_code == 204
+        assert client.get(
+            "/api/v1/transactions", headers={"X-User-Id": "user-a"}
+        ).json() == []
+        assert len(
+            client.get(
+                "/api/v1/transactions", headers={"X-User-Id": "user-b"}
+            ).json()
+        ) == 1
 
 
 def test_validation_rejects_invalid_transaction():

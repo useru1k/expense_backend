@@ -36,6 +36,8 @@ class TransactionRepository(Protocol):
 
     async def delete(self, owner_id: str, transaction_id: str) -> None: ...
 
+    async def delete_all(self, owner_id: str) -> None: ...
+
 
 class BudgetRepository(Protocol):
     async def list(self, owner_id: str) -> list[Budget]: ...
@@ -151,6 +153,9 @@ class MongoTransactionRepository:
         )
         if result.deleted_count == 0:
             raise NotFoundError("Transaction not found")
+
+    async def delete_all(self, owner_id: str) -> None:
+        await self.collection.delete_many({"owner_id": owner_id})
 
 
 class MongoBudgetRepository:

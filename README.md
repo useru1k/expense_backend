@@ -31,6 +31,7 @@ python -m pytest
 - `GET /api/v1/transactions/{id}`
 - `PATCH /api/v1/transactions/{id}`
 - `DELETE /api/v1/transactions/{id}`
+- `DELETE /api/v1/transactions` (delete all transactions for the current user)
 - `GET /api/v1/budgets`
 - `POST /api/v1/budgets`
 - `PATCH /api/v1/budgets/{id}`
