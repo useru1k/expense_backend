@@ -49,5 +49,5 @@ Before running the backend, make sure the Atlas project has:
 2. Your development IP address added to Atlas Network Access.
 3. The password URL-encoded if it contains characters such as `@`, `:`, `/`, or `#`.
 
-The test suite uses in-memory fake repositories, so it does not connect to Atlas or change cloud data. The running application uses `MONGODB_URI` and initializes the `transactions` and `budgets` indexes on startup.
+The test suite uses in-memory fake repositories, so it does not connect to Atlas or change cloud data. The running application uses `MONGODB_URI` and initializes the `transactions` and `budgets` indexes on startup. Local Flutter web origins are allowed through `CORS_ORIGIN_REGEX`.
 

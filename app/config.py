@@ -33,6 +33,7 @@ class Settings:
     mongodb_uri: str
     mongodb_database: str
     cors_origins: tuple[str, ...]
+    cors_origin_regex: str
     default_user_id: str
     require_user_header: bool
 
@@ -51,6 +52,10 @@ def load_settings() -> Settings:
         mongodb_uri=normalize_mongodb_uri(os.getenv("MONGODB_URI", "")),
         mongodb_database=os.getenv("MONGODB_DATABASE", "lumen_finance"),
         cors_origins=origins,
+        cors_origin_regex=os.getenv(
+            "CORS_ORIGIN_REGEX",
+            r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
+        ),
         default_user_id=os.getenv("DEFAULT_USER_ID", "demo-user"),
         require_user_header=os.getenv("REQUIRE_USER_HEADER", "false").lower()
         in {"1", "true", "yes", "on"},
